@@ -6,8 +6,8 @@
 <style>
 html,body{margin:0;height:100%;background:#20262d;color:#edf2f6;font:16px system-ui}
 main{position:relative;height:100%;display:grid;place-items:center;overflow:hidden}
-#screen{position:absolute;inset:0;overflow:hidden}
-#screen canvas{width:100%!important;height:103.3%!important;transform:none!important;image-rendering:auto!important;cursor:none!important}
+#screen{position:absolute;top:0;left:50%;width:min(100vw,137.6344086dvh);aspect-ratio:4/3;transform:translateX(-50%);overflow:hidden;cursor:none}
+#screen canvas{width:100%!important;height:100%!important;transform:none!important;image-rendering:auto!important;cursor:none!important;clip-path:inset(0 0 3.125% 0)}
 #boot{position:absolute;background:#20262d;padding:24px;max-width:420px}
 label{display:block;margin:12px 0}button{padding:8px 14px}
 #screen[hidden]{display:block!important;visibility:hidden}
@@ -26,5 +26,5 @@ label{display:block;margin:12px 0}button{padding:8px 14px}
 </section>
 </main>
 <script src="./libv86.js"></script>
-<script src="./local-config.js"></script><script src="./app.js?v=2"></script>
+<script src="./local-config.js"></script><script src="./app.js?v=3"></script>
 </html>
