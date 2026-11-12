@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FluidSIM Pneumática</title>
+<style>
+html,body{margin:0;height:100%;background:#20262d;color:#edf2f6;font:16px system-ui}
+main{height:100%;display:grid;place-items:center}
+#screen{width:min(1024px,100vw,133.33dvh);overflow:hidden}
+#screen canvas{width:100%!important;height:auto!important;clip-path:inset(0 0 3.2% 0)}
+#boot{position:absolute;background:#20262d;padding:24px;max-width:420px}
+label{display:block;margin:12px 0}button{padding:8px 14px}
+#screen[hidden]{display:block!important;visibility:hidden}
+#boot[hidden],form[hidden]{display:none!important}
+</style>
+<main>
+<div id="screen" hidden aria-label="Editor FluidSIM"><div style="white-space:pre;font:14px monospace"></div><canvas style="display:none"></canvas></div>
+<section id="boot">
+<p id="status" role="status">Abrindo o FluidSIM…</p>
+<form id="files" hidden>
+<label>Disco da máquina <input name="disk" type="file" required></label>
+<label>CD do FluidSIM <input name="cd" type="file" accept=".iso" required></label>
+<label>Estado com o FluidSIM aberto <input name="snapshot" type="file" required></label>
+<button>Iniciar FluidSIM</button>
+</form>
+</section>
+</main>
+<script src="./libv86.js"></script>
+<script src="./local-config.js"></script><script src="./app.js"></script>
+</html>
+
+
+
+
+
