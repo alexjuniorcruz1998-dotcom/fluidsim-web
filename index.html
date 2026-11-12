@@ -5,9 +5,9 @@
 <title>FluidSIM Pneumática</title>
 <style>
 html,body{margin:0;height:100%;background:#20262d;color:#edf2f6;font:16px system-ui}
-main{height:100%;display:grid;place-items:center}
-#screen{width:min(1024px,100vw,133.33dvh);overflow:hidden}
-#screen canvas{width:100%!important;height:auto!important;clip-path:inset(0 0 3.2% 0)}
+main{position:relative;height:100%;display:grid;place-items:center;overflow:hidden}
+#screen{position:absolute;inset:0;overflow:hidden}
+#screen canvas{width:100%!important;height:103.3%!important;transform:none!important;image-rendering:auto!important;cursor:none!important}
 #boot{position:absolute;background:#20262d;padding:24px;max-width:420px}
 label{display:block;margin:12px 0}button{padding:8px 14px}
 #screen[hidden]{display:block!important;visibility:hidden}
@@ -26,10 +26,5 @@ label{display:block;margin:12px 0}button{padding:8px 14px}
 </section>
 </main>
 <script src="./libv86.js"></script>
-<script src="./local-config.js"></script><script src="./app.js"></script>
+<script src="./local-config.js"></script><script src="./app.js?v=2"></script>
 </html>
-
-
-
-
-
