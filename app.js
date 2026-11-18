@@ -24,6 +24,8 @@ function start({ disk, cd, snapshot }) {
   emulator.add_listener("emulator-started", () => {
     document.querySelector("#screen").hidden = false;
     boot.hidden = true;
+    import("./circuit-export.mjs").then(({ addCircuitExport }) => addCircuitExport(emulator))
+      .catch(error => console.error("Falha ao carregar a exportação do circuito:", error));
   });
   emulator.add_listener("download-error", () => {
     status.textContent = "Falha ao carregar os arquivos do FluidSIM.";
@@ -70,6 +72,7 @@ if (deployment) {
     });
   });
 }
+
 
 
 
