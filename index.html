@@ -5,14 +5,23 @@
 <title>FluidSIM Pneumática</title>
 <style>
 html,body{margin:0;height:100%;background:#20262d;color:#edf2f6;font:16px system-ui}
-main{position:relative;height:100%;display:grid;place-items:center;overflow:hidden}
-#screen{position:absolute;top:0;left:50%;width:min(100vw,137.6344086dvh);aspect-ratio:4/3;transform:translateX(-50%);overflow:hidden;cursor:none}
-#screen canvas{width:100%!important;height:100%!important;transform:none!important;image-rendering:auto!important;cursor:none!important;clip-path:inset(0 0 3.125% 0)}
+main{height:100%;display:grid;place-items:center;overflow:hidden}
+#screen{align-self:start;margin-top:max(0px, calc((100dvh - var(--video-height) * 0.96875) / 2));width:var(--video-width);height:var(--video-height);overflow:hidden;cursor:none}
+/* v86 can set pixelated inline, which drops thin strokes at fractional scales. */
+#screen canvas{width:100%!important;height:100%!important;transform:none!important;image-rendering:auto!important;clip-path:inset(0 0 3.125% 0);filter:contrast(1.12)}
 #boot{position:absolute;background:#20262d;padding:24px;max-width:420px}
 label{display:block;margin:12px 0}button{padding:8px 14px}
 #screen[hidden]{display:block!important;visibility:hidden}
 #boot[hidden],form[hidden]{display:none!important}
+#preview-controls{z-index:3}
+#preview-controls .view-button{min-height:max(44px, calc(var(--guest-toolbar-height, 0px) - 8px))}
+#library-lens{position:fixed;z-index:2;pointer-events:none;border:2px solid #334155;border-radius:4px;box-shadow:0 2px 10px #0007;background:white}
 </style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="library-lens-sharpen" color-interpolation-filters="sRGB">
+    <feConvolveMatrix order="3" kernelMatrix="0 -0.15 0 -0.15 1.6 -0.15 0 -0.15 0" preserveAlpha="true"/>
+  </filter>
+</svg>
 <main>
 <div id="screen" hidden aria-label="Editor FluidSIM"><div style="white-space:pre;font:14px monospace"></div><canvas style="display:none"></canvas></div>
 <section id="boot">
@@ -25,6 +34,320 @@ label{display:block;margin:12px 0}button{padding:8px 14px}
 </form>
 </section>
 </main>
+<aside id="preview-controls" style="position:fixed;right:0;top:0;background:white;color:black;padding:8px"></aside>
 <script src="./libv86.js"></script>
-<script src="./local-config.js"></script><script src="./app.js?v=3"></script>
+<script src="./local-config.js"></script><script src="./app.js"></script>
+<script>
+const display = document.querySelector("#screen");
+const frame = display.querySelector("canvas");
+function fitVideo() {
+  const dpr = devicePixelRatio;
+  const fit = Math.min(innerWidth * dpr / frame.width, innerHeight * dpr / (frame.height * 0.96875));
+  const scale = fit;
+  display.style.setProperty("--video-width", (frame.width * scale / dpr) + "px");
+  display.style.setProperty("--video-height", (frame.height * scale / dpr) + "px");
+}
+new MutationObserver(fitVideo).observe(frame, { attributes: true, attributeFilter: ["width", "height"] });
+addEventListener("resize", fitVideo);
+fitVideo();
+
+const previewControls = document.querySelector("#preview-controls");
+if (previewControls) {
+  previewControls.id = "preview-controls";
+  previewControls.replaceChildren();
+  function fitControls() {
+    const bounds = frame.getBoundingClientRect();
+    previewControls.style.setProperty("--guest-toolbar-height",
+      (bounds.top + bounds.height * 0.065) + "px");
+  }
+  new ResizeObserver(fitControls).observe(frame);
+  addEventListener("resize", fitControls);
+  document.addEventListener("fullscreenchange", fitControls);
+  fitControls();
+  const toggle = document.createElement("button");
+  toggle.className = "view-button";
+  toggle.textContent = "Lupa da biblioteca";
+  toggle.setAttribute("aria-pressed", "false");
+  previewControls.append(toggle);
+
+  const fullscreen = document.createElement("button");
+  fullscreen.className = "view-button";
+  fullscreen.type = "button";
+  fullscreen.textContent = "Tela cheia";
+  fullscreen.setAttribute("aria-pressed", "false");
+  const fullscreenStatus = document.createElement("span");
+  fullscreenStatus.setAttribute("role", "status");
+  previewControls.append(fullscreen, fullscreenStatus);
+
+  document.addEventListener("fullscreenchange", () => {
+    const active = document.fullscreenElement === document.documentElement;
+    fullscreen.textContent = active ? "Sair da tela cheia" : "Tela cheia";
+    fullscreen.setAttribute("aria-pressed", String(active));
+    fitVideo();
+  });
+  fullscreen.addEventListener("click", async () => {
+    fullscreenStatus.textContent = "";
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      fullscreenStatus.textContent = " Tela cheia indisponível neste navegador.";
+    }
+  });
+
+  const lens = document.createElement("canvas");
+  lens.id = "library-lens";
+  lens.hidden = true;
+  lens.setAttribute("aria-hidden", "true");
+  document.body.append(lens);
+  const context = lens.getContext("2d");
+  let pointer;
+  let pending;
+  let menuOpen = false;
+  let dialogPopupOrigin;
+  let popupParent;
+  let lastMenuHit;
+  let lastDialogHit;
+
+  function isMenuBar(x, y) {
+    return x >= 0 && x < 0.4 && y >= 0.016 && y < 0.041;
+  }
+
+  function isPopupAt(x, y) {
+    // The guest draws classic Windows menus into the framebuffer.
+    // Check the hovered row and its neighbors so highlighted items still count.
+    const column = Math.max(0, Math.min(frame.width - 9, Math.round(x * frame.width) - 4));
+    const row = Math.round(y * frame.height);
+    const top = Math.max(0, row - 26);
+    const pixels = frame.getContext("2d").getImageData(column, top, 9, 53).data;
+    function matches(offset, color) {
+      let count = 0;
+      for (let i = offset * 36; i < (offset + 1) * 36; i += 4) {
+        if (color(pixels[i], pixels[i + 1], pixels[i + 2])) count++;
+      }
+      return count >= 5;
+    }
+    const menuGray = (r, g, b) => r >= 200 && r <= 231 &&
+      g >= 195 && g <= 228 && b >= 180 && b <= 218 && r >= b + 4;
+    const highlight = (r, g, b) => r < 75 && g < 115 && b > g + 24;
+    const center = row - top;
+    const grayAbove = [3, 9, 15, 21].some(offset => matches(offset, menuGray));
+    const grayBelow = [31, 37, 43, 49].some(offset => matches(offset, menuGray));
+    return matches(center, menuGray) ||
+      (grayAbove && grayBelow) ||
+      ((grayAbove || grayBelow) && [center - 3, center, center + 3]
+        .some(offset => matches(offset, highlight)));
+  }
+
+  let dialogCheck;
+  function isDialogAt(x, y, now) {
+    if (x < 0 || x >= 1 || y < 0.04 || y >= 0.96875 ||
+        frame.width !== 1920 || frame.height !== 1200) return false;
+    const px = Math.floor(x * frame.width);
+    const py = Math.floor(y * frame.height);
+    const contains = box => box && px >= box.left && px <= box.right &&
+      py >= box.top && py <= box.bottom;
+    if (dialogCheck && now - dialogCheck.time < 160) return contains(dialogCheck.box);
+
+    // Look for a floating window's active title bar and continuous side borders.
+    const ctx = frame.getContext("2d");
+    const pixels = ctx.getImageData(0, 0, frame.width, frame.height).data;
+    const pixel = (col, row) => (row * frame.width + col) * 4;
+    function blue(col, row) {
+      const i = pixel(col, row);
+      return pixels[i] < 125 && pixels[i + 2] > pixels[i] + 34 &&
+        pixels[i + 2] > pixels[i + 1] + 18;
+    }
+    function border(col, row) {
+      for (let delta = -3; delta <= 3; delta++) {
+        if (col + delta < 0 || col + delta >= frame.width) continue;
+        const i = pixel(col + delta, row);
+        if (Math.abs(pixels[i] - pixels[i + 2]) < 18 && pixels[i] < 175) return true;
+      }
+      return false;
+    }
+    let box;
+    for (let row = py + 12; row >= 47 && !box; row -= 3) {
+      for (let col = 0; col <= px; col += 2) {
+        if (!blue(col, row)) continue;
+        const left = col;
+        while (col < frame.width - 4 &&
+               (blue(col + 2, row) || blue(col + 4, row))) col += 2;
+        // The maximized circuit's own title is part of the main workspace.
+        if (row < 115 && left >= 365 && left <= 405) continue;
+        if (col - left < 32) continue;
+        for (let right = col; right < Math.min(frame.width - 2, col + 430); right += 2) {
+          if (right - left < 100) continue;
+          // The raised left edge can be nearly white. Use the shadow on
+          // the right and the continuous bottom edge to close the rectangle.
+          if (![row + 30, row + 50].every(line => line < frame.height &&
+              border(right, line))) continue;
+          for (let bottom = row + 55; bottom < frame.height - 3; bottom++) {
+            if (!border(right, bottom)) break;
+            const width = right - left;
+            if ([0.17, 0.33, 0.5, 0.67, 0.83].every(fraction => {
+              const i = pixel(Math.round(left + width * fraction), bottom);
+              return pixels[i] < 175 && Math.abs(pixels[i] - pixels[i + 2]) < 18;
+            })) {
+              const candidate = { left: Math.max(0, left - 6), right: right + 3,
+                top: row - 12, bottom, titleX: left, titleY: row };
+              if (contains(candidate)) box = candidate;
+              break;
+            }
+          }
+          if (box) break;
+        }
+        if (box) break;
+      }
+    }
+    dialogCheck = { time: now, box };
+    return contains(box);
+  }
+  function isPopupParentAt(x, y) {
+    if (!popupParent) return false;
+    const { left, right, top, bottom, titleX, titleY } = popupParent;
+    const guest = frame.getContext("2d");
+    const [r, g, b] = guest.getImageData(titleX, titleY, 1, 1).data;
+    const activeTitle = r < 125 && b > r + 34 && b > g + 18;
+    const inactiveTitle = r >= 95 && r <= 205 && Math.abs(r - b) < 20 &&
+      Math.abs(r - g) < 16;
+    const [edgeR, , edgeB] = guest.getImageData(Math.floor((left + right) / 2), bottom, 1, 1).data;
+    const bottomEdge = edgeR < 175 && Math.abs(edgeR - edgeB) < 18;
+    if (!activeTitle && !(inactiveTitle && bottomEdge)) {
+      popupParent = undefined;
+      dialogPopupOrigin = undefined;
+      return false;
+    }
+    return x * frame.width >= left && x * frame.width <= right &&
+      y * frame.height >= top && y * frame.height <= bottom;
+  }
+  function hideLens() {
+    pointer = undefined;
+    lens.hidden = true;
+    cancelAnimationFrame(pending);
+    pending = undefined;
+  }
+
+  function drawLens(now) {
+    pending = undefined;
+    if (!pointer) return;
+    const bounds = frame.getBoundingClientRect();
+    const x = (pointer.x - bounds.left) / bounds.width;
+    const y = (pointer.y - bounds.top) / bounds.height;
+    // Bounds of the menu, toolbar and library in the saved 1920 × 1200 layout.
+    const overToolbar = x >= 0 && x < 1 && y >= 0 && y < 0.065;
+    const overLibrary = x >= 0 && x < 0.193 && y >= 0.085 && y < 0.6;
+    const nearDialogPopup = dialogPopupOrigin &&
+      Math.abs(x * frame.width - dialogPopupOrigin.x) <= 320 &&
+      Math.abs(y * frame.height - dialogPopupOrigin.y) <= 360;
+    const canHoverMenu = (menuOpen || nearDialogPopup) && !overToolbar && x >= 0 && x < 1 &&
+      y >= 0.065 && y < 0.96875;
+    if (canHoverMenu && isPopupAt(x, y)) {
+      lastMenuHit = { x: pointer.x, y: pointer.y, time: now };
+    }
+    // Highlight changes can temporarily obscure the menu colors under the cursor.
+    const overMenu = canHoverMenu && lastMenuHit && now - lastMenuHit.time < 180 &&
+      Math.hypot(pointer.x - lastMenuHit.x, pointer.y - lastMenuHit.y) < 32;
+    const canHoverDialog = !overToolbar && !overLibrary && !overMenu &&
+      x >= 0 && x < 1 && y >= 0.04 && y < 0.96875;
+    if (canHoverDialog && (isPopupParentAt(x, y) || isDialogAt(x, y, now))) {
+      lastDialogHit = { x: pointer.x, y: pointer.y, time: now };
+    }
+    const overDialog = canHoverDialog && lastDialogHit && now - lastDialogHit.time < 180 &&
+      Math.hypot(pointer.x - lastDialogHit.x, pointer.y - lastDialogHit.y) < 32;
+    if (display.hidden || frame.width !== 1920 || frame.height !== 1200 ||
+        (!overToolbar && !overLibrary && !overMenu && !overDialog)) {
+      hideLens();
+      return;
+    }
+    // Tooltips can extend left across the entire library and past its right edge.
+    const width = Math.min(840, innerWidth - 12);
+    const height = Math.min(288, innerHeight - 12);
+    const sourceWidth = 420;
+    const sourceHeight = height * sourceWidth / width;
+    const followPointer = overToolbar || overMenu || overDialog;
+    const sx = followPointer ? Math.max(0, Math.min(x * frame.width - sourceWidth / 2, frame.width - sourceWidth)) : 0;
+    const sy = followPointer ?
+      Math.max(0, Math.min(y * frame.height - sourceHeight / 2, frame.height - sourceHeight)) :
+      Math.max(102, y * frame.height - sourceHeight / 2);
+    const pixelWidth = Math.round(width * devicePixelRatio);
+    const pixelHeight = Math.round(height * devicePixelRatio);
+    if (lens.width !== pixelWidth || lens.height !== pixelHeight) {
+      lens.width = pixelWidth;
+      lens.height = pixelHeight;
+    }
+    lens.style.width = width + "px";
+    lens.style.height = height + "px";
+    const left = followPointer ? pointer.x + 24 : bounds.left + bounds.width * 0.193 + 8;
+    const top = pointer.y - height / 2;
+    lens.style.left = Math.max(2, Math.min(left, innerWidth - width - 6)) + "px";
+    lens.style.top = Math.max(2, Math.min(top, innerHeight - height - 6)) + "px";
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.filter = "url(#library-lens-sharpen)";
+    context.drawImage(frame, sx, sy, sourceWidth, sourceHeight, 0, 0, lens.width, lens.height);
+    lens.hidden = false;
+    pending = requestAnimationFrame(drawLens);
+  }
+
+  toggle.addEventListener("click", () => {
+    const active = toggle.getAttribute("aria-pressed") === "true";
+    toggle.setAttribute("aria-pressed", String(!active));
+    toggle.textContent = active ? "Lupa da biblioteca" : "Desligar lupa";
+
+    if (active) {
+      menuOpen = false;
+      dialogPopupOrigin = undefined;
+      popupParent = undefined;
+      hideLens();
+    }
+  });
+  document.addEventListener("pointerdown", event => {
+    lastMenuHit = undefined;
+    const bounds = frame.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+    const active = event.target === frame && toggle.getAttribute("aria-pressed") === "true";
+    dialogPopupOrigin = active && (event.button === 0 || event.button === 2) &&
+      isDialogAt(x, y, performance.now()) ?
+      { x: x * frame.width, y: y * frame.height } : undefined;
+    popupParent = dialogPopupOrigin ? dialogCheck?.box : undefined;
+    dialogCheck = undefined;
+    menuOpen = event.target === frame && event.button === 0 &&
+      toggle.getAttribute("aria-pressed") === "true" && isMenuBar(x, y) && !menuOpen;
+    if (event.target === frame) {
+      trackPointer(event);
+    } else {
+      lastDialogHit = undefined;
+      hideLens();
+    }
+  }, true);
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" || event.key === "Enter") {
+      menuOpen = false;
+      dialogPopupOrigin = undefined;
+      popupParent = undefined;
+      hideLens();
+    }
+  }, true);
+  function trackPointer(event) {
+    if (toggle.getAttribute("aria-pressed") !== "true") return;
+    pointer = { x: event.clientX, y: event.clientY };
+    if (pending === undefined) pending = requestAnimationFrame(drawLens);
+  }
+  frame.addEventListener("pointermove", trackPointer);
+  frame.addEventListener("pointerup", trackPointer);
+  frame.addEventListener("pointerleave", hideLens);
+  addEventListener("resize", hideLens);
+}
+</script>
 </html>
+
+
+
+
+
+
