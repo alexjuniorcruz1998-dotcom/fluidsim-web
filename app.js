@@ -40,31 +40,12 @@ async function loadParts(paths) {
   return new Blob(parts);
 }
 
-async function loadDiskOverlay() {
-  const response = await fetch("./disk-overlay.bin");
-  if (!response.ok) throw new Error("Falha ao carregar as alterações do disco");
-  const data = await response.arrayBuffer();
-  const offsets = new DataView(data);
-  const blocksByChunk = new Map();
-  const chunkSize = 262144;
-  for (let position = 0; position < data.byteLength; position += 260) {
-    const offset = offsets.getUint32(position, true);
-    const start = Math.floor(offset / chunkSize) * chunkSize;
-    if (!blocksByChunk.has(start)) blocksByChunk.set(start, []);
-    blocksByChunk.get(start).push({ offset: offset - start, bytes: new Uint8Array(data, position + 4, 256) });
-  }
-  return (start, data) => {
-    for (const block of blocksByChunk.get(start) ?? []) data.set(block.bytes, block.offset);
-  };
-}
-
 async function launch(images) {
   try {
     if (images.snapshotParts) {
       const cd = await loadParts(images.cdParts);
       const snapshot = await loadParts(images.snapshotParts);
-      const disk = { ...images.disk, patchChunk: await loadDiskOverlay() };
-      start({ disk, cd: { buffer: await cd.arrayBuffer() }, snapshot: { buffer: await snapshot.arrayBuffer() } });
+      start({ disk: images.disk, cd: { buffer: await cd.arrayBuffer() }, snapshot: { buffer: await snapshot.arrayBuffer() } });
     } else {
       start(images);
     }
