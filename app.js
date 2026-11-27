@@ -1,3 +1,5 @@
+import { createFscaleWasm } from './fscale-fix.mjs';
+
 const root = "./";
 const boot = document.querySelector("#boot");
 const status = document.querySelector("#status");
@@ -10,6 +12,7 @@ function start({ disk, cd, snapshot }) {
   files.hidden = true;
   status.textContent = "Abrindo o FluidSIM…";
   const emulator = new V86({
+    wasm_fn: createFscaleWasm,
     memory_size: 512 * 1024 * 1024,
     vga_memory_size: 8 * 1024 * 1024,
     wasm_path: root + "v86.wasm",
